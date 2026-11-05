@@ -16,6 +16,12 @@
   let loaded = false;
   let filterCat = "All";
   let query = "";
+  let settings = {};
+  // Shop details: use what the owner saved in Settings, otherwise fall back to config.js
+  const val = (k) => {
+    const v = settings[k.toLowerCase()];
+    return v !== undefined && v !== null && String(v).trim() !== "" ? String(v).trim() : cfg[k];
+  };
 
   function toast(msg) {
     const t = document.getElementById("toast");
@@ -41,7 +47,7 @@
     sb.auth.onAuthStateChange((_e, s) => { session = s; });
     window.addEventListener("hashchange", render);
     render();
-    await loadProducts();
+    await Promise.all([loadProducts(), loadSettings()]);
     render();
   }
 
@@ -51,6 +57,11 @@
     if (error) loadError = error.message;
     else products = data || [];
     loaded = true;
+  }
+
+  async function loadSettings() {
+    const { data, error } = await sb.from("settings").select("*").eq("id", 1).maybeSingle();
+    if (!error && data) settings = data; // if the table isn't set up yet, config.js values are used
   }
 
   const route = () => (location.hash || "#/").slice(1);
@@ -76,6 +87,7 @@
     app.innerHTML = `
       <section class="hero"><h1>Preorder from China</h1>
       <p>Every price below already includes shipping. Tap a product to preorder on WhatsApp.</p></section>
+      ${settings.announcement ? `<div class="notice">${esc(settings.announcement)}</div>` : ""}
       <div class="tools">
         <input class="search" type="search" id="q" placeholder="Search products" aria-label="Search products" value="${esc(query)}">
         <div class="chips" id="chips">${cats.map((c) => `<button class="chip" data-c="${esc(c)}" aria-pressed="${c === filterCat}">${esc(c)}</button>`).join("")}</div>
@@ -93,13 +105,13 @@
   }
 
   function contactSection() {
-    const num = String(cfg.WHATSAPP_NUMBER || "").replace(/\D/g, "");
-    const chat = `https://wa.me/${num}?text=${encodeURIComponent("Hello " + (cfg.BUSINESS_NAME || "Ebony Import Hub") + ", I have a question.")}`;
+    const num = String(val("WHATSAPP_NUMBER") || "").replace(/\D/g, "");
+    const chat = `https://wa.me/${num}?text=${encodeURIComponent("Hello " + (val("BUSINESS_NAME") || "Ebony Import Hub") + ", I have a question.")}`;
     const items = [];
-    if (num) items.push(`<a class="btn btn-wa" href="${esc(chat)}" target="_blank" rel="noopener">Chat on WhatsApp${cfg.PHONE_DISPLAY ? ` · ${esc(cfg.PHONE_DISPLAY)}` : ""}</a>`);
-    if (cfg.WHATSAPP_GROUP) items.push(`<a class="btn btn-gold" href="${esc(cfg.WHATSAPP_GROUP)}" target="_blank" rel="noopener">Join our WhatsApp group</a>`);
-    if (cfg.TIKTOK_HANDLE) items.push(`<a class="btn btn-ghost" href="https://www.tiktok.com/@${esc(cfg.TIKTOK_HANDLE)}" target="_blank" rel="noopener">TikTok @${esc(cfg.TIKTOK_HANDLE)}</a>`);
-    if (cfg.EMAIL) items.push(`<a class="btn btn-ghost" href="mailto:${esc(cfg.EMAIL)}">${esc(cfg.EMAIL)}</a>`);
+    if (num) items.push(`<a class="btn btn-wa" href="${esc(chat)}" target="_blank" rel="noopener">Chat on WhatsApp${val("PHONE_DISPLAY") ? ` · ${esc(val("PHONE_DISPLAY"))}` : ""}</a>`);
+    if (val("WHATSAPP_GROUP")) items.push(`<a class="btn btn-gold" href="${esc(val("WHATSAPP_GROUP"))}" target="_blank" rel="noopener">Join our WhatsApp group</a>`);
+    if (val("TIKTOK_HANDLE")) items.push(`<a class="btn btn-ghost" href="https://www.tiktok.com/@${esc(val("TIKTOK_HANDLE"))}" target="_blank" rel="noopener">TikTok @${esc(val("TIKTOK_HANDLE"))}</a>`);
+    if (val("EMAIL")) items.push(`<a class="btn btn-ghost" href="mailto:${esc(val("EMAIL"))}">${esc(val("EMAIL"))}</a>`);
     if (!items.length) return "";
     return `<section class="contact panel"><h2>Contact us</h2><p>Questions, or want something that isn't listed? Reach out.</p><div class="contact-links">${items.join("")}</div></section>`;
   }
@@ -137,8 +149,8 @@
 
   function openProduct(p) {
     const imgs = p.image_urls && p.image_urls.length ? p.image_urls : [];
-    const msg = `Hello ${cfg.BUSINESS_NAME || "Ebony Import Hub"}, I'd like to preorder:\n${p.name}\nItem: ${naira(p.price)}\nShipping: ${naira(p.shipping_fee)}\nTotal: ${naira(total(p))}`;
-    const wa = `https://wa.me/${encodeURIComponent(String(cfg.WHATSAPP_NUMBER || "").replace(/\D/g, ""))}?text=${encodeURIComponent(msg)}`;
+    const msg = `Hello ${val("BUSINESS_NAME") || "Ebony Import Hub"}, I'd like to preorder:\n${p.name}\nItem: ${naira(p.price)}\nShipping: ${naira(p.shipping_fee)}\nTotal: ${naira(total(p))}`;
+    const wa = `https://wa.me/${encodeURIComponent(String(val("WHATSAPP_NUMBER") || "").replace(/\D/g, ""))}?text=${encodeURIComponent(msg)}`;
     const ov = document.createElement("div");
     ov.className = "overlay";
     ov.innerHTML = `
@@ -203,11 +215,12 @@
   function renderDashboard() {
     app.innerHTML = `
       <div class="owner-bar"><h1>Owner dashboard</h1><button class="btn btn-ghost btn-sm" id="logout">Log out</button></div>
-      <div class="actions"><button class="btn btn-gold" id="addBtn">+ Add product</button><a class="btn btn-ghost" href="#/">View shop</a></div>
+      <div class="actions"><button class="btn btn-gold" id="addBtn">+ Add product</button><button class="btn btn-ghost" id="setBtn">Settings</button><a class="btn btn-ghost" href="#/">View shop</a></div>
       <div id="formHost"></div>
       <div class="olist" id="olist"></div>`;
     document.getElementById("logout").onclick = async () => { await sb.auth.signOut(); session = null; renderLogin(); };
     document.getElementById("addBtn").onclick = () => openForm(null);
+    document.getElementById("setBtn").onclick = () => openSettings();
     drawOwnerList();
   }
 
@@ -243,6 +256,125 @@
         await removeImages(p.image_urls || []);
         products = products.filter((x) => x.id !== id); drawOwnerList(); toast("Deleted");
       }
+    };
+  }
+
+  function openSettings() {
+    const host = document.getElementById("formHost");
+    const $ = (id) => document.getElementById(id);
+    host.innerHTML = `
+      <div class="panel" style="margin-top:16px">
+        <h2 style="margin:0 0 14px;font-size:18px">Shop details</h2>
+        <form id="sform">
+          <div class="field"><label for="s-name">Business name</label>
+            <input id="s-name" type="text" maxlength="60" value="${esc(val("BUSINESS_NAME"))}"></div>
+          <div class="field"><label for="s-wa">WhatsApp number</label>
+            <input id="s-wa" type="text" inputmode="tel" maxlength="20" value="${esc(val("PHONE_DISPLAY") || val("WHATSAPP_NUMBER"))}">
+            <span class="hint">e.g. 09066944108. Customers' preorder messages go to this number.</span></div>
+          <div class="field"><label for="s-email">Email</label>
+            <input id="s-email" type="text" inputmode="email" maxlength="120" value="${esc(val("EMAIL"))}"></div>
+          <div class="field"><label for="s-tiktok">TikTok handle</label>
+            <input id="s-tiktok" type="text" maxlength="60" value="${esc(val("TIKTOK_HANDLE"))}"></div>
+          <div class="field"><label for="s-group">WhatsApp group link</label>
+            <input id="s-group" type="text" inputmode="url" maxlength="300" value="${esc(val("WHATSAPP_GROUP"))}"></div>
+          <div class="field"><label for="s-note">Announcement (shown at the top of the shop)</label>
+            <textarea id="s-note" maxlength="200" placeholder="e.g. Next China shipment closes 20 Nov. Preorder now!">${esc(settings.announcement || "")}</textarea>
+            <span class="hint">Leave empty to hide the banner.</span></div>
+          <p class="error" id="serr" role="alert" hidden></p>
+          <div class="actions"><button class="btn" type="submit" id="sBtn">Save details</button></div>
+        </form>
+      </div>
+
+      <div class="panel" style="margin-top:16px">
+        <h2 style="margin:0 0 14px;font-size:18px">Change password</h2>
+        <form id="pwform">
+          <input class="sr-only" type="email" autocomplete="username" value="${esc(cfg.OWNER_EMAIL)}" readonly tabindex="-1" aria-hidden="true">
+          <div class="field"><label for="pw1">New password</label>
+            <input id="pw1" type="password" autocomplete="new-password" minlength="10" required>
+            <span class="hint">At least 10 characters. Longer is safer.</span></div>
+          <div class="field"><label for="pw2">Type it again</label>
+            <input id="pw2" type="password" autocomplete="new-password" minlength="10" required></div>
+          <p class="error" id="perr" role="alert" hidden></p>
+          <div class="actions"><button class="btn" type="submit" id="pBtn">Change password</button></div>
+        </form>
+      </div>
+
+      <div class="panel" style="margin-top:16px">
+        <h2 style="margin:0 0 6px;font-size:18px">Security</h2>
+        <p style="margin:0 0 14px;color:var(--muted);font-size:14px">Lost a phone or used someone else's device? Sign out of every device, then log in again here.</p>
+        <div class="actions"><button class="btn btn-danger" id="signoutAll">Sign out of all devices</button>
+          <button class="btn btn-ghost" id="closeSet">Close settings</button></div>
+      </div>`;
+    host.scrollIntoView({ behavior: "smooth", block: "start" });
+
+    $("closeSet").onclick = () => { host.innerHTML = ""; };
+
+    $("signoutAll").onclick = async () => {
+      if (!confirm("Sign out of every device? You will need your password to log in again.")) return;
+      await sb.auth.signOut({ scope: "global" });
+      session = null;
+      renderLogin();
+    };
+
+    $("sform").onsubmit = async (e) => {
+      e.preventDefault();
+      const btn = $("sBtn"), err = $("serr");
+      err.hidden = true;
+      const typed = $("s-wa").value.trim();
+      let digits = typed.replace(/\D/g, "");
+      if (digits.length === 11 && digits.startsWith("0")) digits = "234" + digits.slice(1);
+      const group = $("s-group").value.trim();
+      if (group && !/^https:\/\//i.test(group)) {
+        err.textContent = "The group link must start with https://";
+        err.hidden = false;
+        return;
+      }
+      const tiktok = $("s-tiktok").value.trim()
+        .replace(/^https?:\/\/(www\.)?tiktok\.com\/@/i, "").replace(/^@/, "").split(/[/?]/)[0];
+      const row = {
+        id: 1,
+        business_name: $("s-name").value.trim(),
+        whatsapp_number: digits,
+        phone_display: typed,
+        email: $("s-email").value.trim(),
+        tiktok_handle: tiktok,
+        whatsapp_group: group,
+        announcement: $("s-note").value.trim(),
+        updated_at: new Date().toISOString(),
+      };
+      btn.disabled = true; btn.textContent = "Saving…";
+      const { data, error } = await sb.from("settings").upsert(row).select().single();
+      btn.disabled = false; btn.textContent = "Save details";
+      if (error) {
+        err.textContent = /settings|schema cache|does not exist/i.test(error.message)
+          ? "The settings table isn't set up yet. Run settings.sql in Supabase (see README), then try again."
+          : error.message;
+        err.hidden = false;
+        return;
+      }
+      settings = data;
+      toast("Saved");
+    };
+
+    $("pwform").onsubmit = async (e) => {
+      e.preventDefault();
+      const a = $("pw1").value, b = $("pw2").value;
+      const btn = $("pBtn"), err = $("perr");
+      err.hidden = true;
+      if (a.length < 10) { err.textContent = "Use at least 10 characters."; err.hidden = false; return; }
+      if (a !== b) { err.textContent = "The two passwords don't match."; err.hidden = false; return; }
+      btn.disabled = true; btn.textContent = "Changing…";
+      const { error } = await sb.auth.updateUser({ password: a });
+      btn.disabled = false; btn.textContent = "Change password";
+      if (error) {
+        err.textContent = /reauth|recent/i.test(error.message)
+          ? "For security, log out, log in again, then change your password."
+          : error.message;
+        err.hidden = false;
+        return;
+      }
+      e.target.reset();
+      toast("Password changed. Use the new password on your other devices.");
     };
   }
 

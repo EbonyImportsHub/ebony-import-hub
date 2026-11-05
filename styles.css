@@ -128,3 +128,6 @@ button,input,select,textarea{font:inherit;color:inherit}
 .contact-links{display:flex;flex-direction:column;gap:10px}
 @media (min-width:700px){.contact-links{flex-direction:row;flex-wrap:wrap}}
 .contact-links .btn{overflow-wrap:anywhere;text-align:center}
+
+/* announcement banner */
+.notice{margin:12px 0 0;padding:12px 14px;border-radius:12px;background:var(--ebony);color:var(--cream);font-size:14px;border-left:6px solid var(--gold);white-space:pre-line}
