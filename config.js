@@ -1,8 +1,8 @@
 // Fill in the two SUPABASE lines once (see README.md). None of these are secret:
 // the "anon" key is meant to be public. Your password is never stored here.
 window.APP_CONFIG = {
-  SUPABASE_URL: "YOUR_SUPABASE_PROJECT_URL",
-  SUPABASE_ANON_KEY: "YOUR_SUPABASE_ANON_KEY",
+  SUPABASE_URL: "https://lmtejbxzkptvbqemqhol.supabase.co",
+  SUPABASE_ANON_KEY: "sb_publishable_v1eE8x8XjllTaUmehHcmpw_wvSdIwvn",
   OWNER_EMAIL: "ebonyimports2025@gmail.com",   // create your Supabase owner user with this same email
   BUSINESS_NAME: "Ebony Import Hub",
   WHATSAPP_NUMBER: "2349066944108",            // 09066944108 in international format (digits only, no +)
