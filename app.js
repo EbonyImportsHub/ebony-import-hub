@@ -169,10 +169,10 @@
     if (!cats.includes(filterCat)) filterCat = "All";
     app.innerHTML = `
       <section class="hero"><h1>Preorder from China</h1>
-      <p>Every price below already includes shipping. Tap a product to preorder on WhatsApp.</p>
-      ${(settings.rules || "").trim() ? `<p style="margin-top:10px"><a class="btn btn-ghost btn-sm" href="#/info">Shipping rules &amp; how to order</a></p>` : ""}</section>
+      <p>Every price below already includes shipping. Tap a product to preorder on WhatsApp.</p></section>
       ${settings.announcement ? `<div class="notice">${esc(settings.announcement)}</div>` : ""}
       ${batchBar()}
+      ${rulesCard()}
       <div class="tools">
         <input class="search" type="search" id="q" placeholder="Search products" aria-label="Search products" value="${esc(query)}">
         <div class="chips" id="chips">${cats.map((c) => `<button class="chip" data-c="${esc(c)}" aria-pressed="${c === filterCat}">${esc(c)}</button>`).join("")}</div>
@@ -323,6 +323,13 @@
     }
     closeList();
     return html;
+  }
+
+  // All the rules, shown on the shop page under the batch card (customers can fold it away)
+  function rulesCard() {
+    const rules = (settings.rules || "").trim();
+    if (!rules) return "";
+    return `<details class="rulescard" open><summary>Shipping rules &amp; how to order</summary><div class="rules">${renderRules(rules)}</div></details>`;
   }
 
   function renderInfo() {

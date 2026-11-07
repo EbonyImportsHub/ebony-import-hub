@@ -84,7 +84,7 @@ Run `rules.sql` once in Supabase (SQL Editor, New query, paste, Run). Then, in t
 
 - Start a line with `# ` for a heading and `- ` for a bullet point. Leave a blank line between sections.
 - Tap **Save rules**. Use **Preview page** to see what customers will see.
-- Customers get a **Shipping rules & how to order** button at the top of the shop, plus a **Shipping rules** link at the bottom. If you leave the box empty, the button at the top is hidden.
+- Customers see all your rules in a **Shipping rules & how to order** card on the shop, right under the batch card. They can tap **Hide** to fold it away. There is also a **Shipping rules** link at the bottom of the shop. If you leave the box empty, the card is hidden.
 
 ## Owner login privacy
 

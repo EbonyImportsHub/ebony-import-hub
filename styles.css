@@ -159,3 +159,11 @@ button,input,select,textarea{font:inherit;color:inherit}
 .rules ul{margin:6px 0;padding-left:22px}
 .rules li{margin:5px 0;font-size:15px}
 .muted{color:var(--muted)}
+
+/* shipping rules card on the shop page */
+.rulescard{margin:12px 0 0;background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:14px}
+.rulescard summary{font-weight:700;font-size:16px;cursor:pointer;min-height:28px;list-style:none;display:flex;align-items:center;justify-content:space-between;gap:10px}
+.rulescard summary::-webkit-details-marker{display:none}
+.rulescard summary::after{content:"Hide";font-size:12px;font-weight:600;color:var(--muted)}
+.rulescard:not([open]) summary::after{content:"Show"}
+.rulescard .rules{margin-top:10px}
