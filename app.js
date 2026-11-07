@@ -24,6 +24,8 @@
   let query = "";
   let settings = {};
   // Shop details: use what the owner saved in Settings, otherwise fall back to config.js
+  // Business name: what the owner saved in Settings, otherwise the default
+  const bizName = () => ((settings.business_name || "").trim() || "Ebony Imports Hub");
   const val = (k) => {
     const v = settings[k.toLowerCase()];
     return v !== undefined && v !== null && String(v).trim() !== "" ? String(v).trim() : cfg[k];
@@ -93,7 +95,15 @@
       setupNeeded();
       return;
     }
-    sb = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
+    // The owner login is kept in sessionStorage, which the browser wipes when the tab or app is closed.
+    // So after closing, the password is needed again. (Old "stay logged in" copies are removed.)
+    try { Object.keys(localStorage).filter((k) => /^sb-.*-auth-token/.test(k)).forEach((k) => localStorage.removeItem(k)); } catch (_) {}
+    let store;
+    try { store = window.sessionStorage; store.getItem("x"); }
+    catch (_) { const mem = {}; store = { getItem: (k) => (k in mem ? mem[k] : null), setItem: (k, v) => { mem[k] = v; }, removeItem: (k) => { delete mem[k]; } }; }
+    sb = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY, {
+      auth: { storage: store, persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
+    });
     const { data } = await sb.auth.getSession();
     session = data.session;
     sb.auth.onAuthStateChange((_e, s) => { session = s; });
@@ -187,7 +197,7 @@
 
   function contactSection() {
     const num = String(val("WHATSAPP_NUMBER") || "").replace(/\D/g, "");
-    const chat = `https://wa.me/${num}?text=${encodeURIComponent("Hello " + (val("BUSINESS_NAME") || "Ebony Import Hub") + ", I have a question.")}`;
+    const chat = `https://wa.me/${num}?text=${encodeURIComponent("Hello " + (bizName()) + ", I have a question.")}`;
     const items = [];
     if (num) items.push(`<a class="btn btn-wa" href="${esc(chat)}" target="_blank" rel="noopener">Chat on WhatsApp${val("PHONE_DISPLAY") ? ` · ${esc(val("PHONE_DISPLAY"))}` : ""}</a>`);
     if (val("WHATSAPP_GROUP")) items.push(`<a class="btn btn-gold" href="${esc(val("WHATSAPP_GROUP"))}" target="_blank" rel="noopener">Join our WhatsApp group</a>`);
@@ -242,7 +252,7 @@
     const waLink = () => {
       const b = avail.find((x) => x.id === chosen);
       const lines = [
-        `Hello ${val("BUSINESS_NAME") || "Ebony Import Hub"}, I'd like to preorder:`,
+        `Hello ${bizName()}, I'd like to preorder:`,
         p.name,
         `Item: ${naira(p.price)}`,
         `Shipping: ${naira(p.shipping_fee)}`,
@@ -318,7 +328,7 @@
   function renderInfo() {
     if (!loaded) { app.innerHTML = `<div class="loading">Loading…</div>`; return; }
     const num = String(val("WHATSAPP_NUMBER") || "").replace(/\D/g, "");
-    const chat = `https://wa.me/${num}?text=${encodeURIComponent("Hello " + (val("BUSINESS_NAME") || "Ebony Import Hub") + ", I have a question about shipping.")}`;
+    const chat = `https://wa.me/${num}?text=${encodeURIComponent("Hello " + (bizName()) + ", I have a question about shipping.")}`;
     const rules = (settings.rules || "").trim();
     app.innerHTML = `
       <section class="hero"><h1>Shipping rules &amp; how to order</h1>
@@ -528,7 +538,7 @@
         <h2 style="margin:0 0 14px;font-size:18px">Shop details</h2>
         <form id="sform">
           <div class="field"><label for="s-name">Business name</label>
-            <input id="s-name" type="text" maxlength="60" value="${esc(val("BUSINESS_NAME"))}"></div>
+            <input id="s-name" type="text" maxlength="60" value="${esc(bizName())}"></div>
           <div class="field"><label for="s-wa">WhatsApp number</label>
             <input id="s-wa" type="text" inputmode="tel" maxlength="20" value="${esc(val("PHONE_DISPLAY") || val("WHATSAPP_NUMBER"))}">
             <span class="hint">e.g. 09066944108. Customers' preorder messages go to this number.</span></div>
@@ -807,6 +817,20 @@
       }
     };
   }
+
+  // The owner area is not linked anywhere customers can see.
+  // To open the owner login: tap the logo at the top 5 times quickly.
+  (function () {
+    const brand = document.querySelector(".brand");
+    if (!brand) return;
+    let taps = 0, timer;
+    brand.addEventListener("click", (e) => {
+      taps += 1;
+      clearTimeout(timer);
+      timer = setTimeout(() => { taps = 0; }, 2500);
+      if (taps >= 5) { taps = 0; e.preventDefault(); location.hash = "#/owner"; }
+    });
+  })();
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));

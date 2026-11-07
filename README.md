@@ -1,4 +1,4 @@
-# Ebony Import Hub app
+# Ebony Imports Hub app
 
 An installable app (works on Android and iPhone) where customers browse your products with prices including shipping, and where you log in with one password to add, edit and remove products and photos.
 
@@ -44,7 +44,7 @@ The anon key is designed to be public. It cannot change anything without your ow
 
 ## Using the owner area
 
-1. Scroll to the bottom of the app and tap **Owner login**, enter your password. Phone, tablet and laptop all use the same password.
+1. Tap the **logo at the top of the app 5 times quickly**. The owner login opens. (There is no owner link on the shop, so customers never see it.) Enter your owner password. Phone, tablet and laptop all use the same password.
 2. Tap **Add product**: add up to 4 photos, name, category (Clothes, Shoes, Bags, etc., or type your own), item price, and shipping fee. The total customers will see is shown as you type.
 3. **Edit** changes anything. **Mark sold out** keeps the product visible but stops preorders. **Delete** removes it and its photos.
 
@@ -85,3 +85,13 @@ Run `rules.sql` once in Supabase (SQL Editor, New query, paste, Run). Then, in t
 - Start a line with `# ` for a heading and `- ` for a bullet point. Leave a blank line between sections.
 - Tap **Save rules**. Use **Preview page** to see what customers will see.
 - Customers get a **Shipping rules & how to order** button at the top of the shop, plus a **Shipping rules** link at the bottom. If you leave the box empty, the button at the top is hidden.
+
+## Owner login privacy
+
+- The owner login is not linked anywhere on the shop. Open it by tapping the logo 5 times quickly.
+- When you close the tab or the installed app, you are logged out automatically and need your password again.
+- Staying logged in while the app is open and refreshing the page is normal. Use **Log out** or **Sign out of all devices** (in Settings) to end it sooner.
+
+## Fixing "Could not find the ... column" errors
+
+Run `batches.sql` again in Supabase (SQL Editor, New query, paste, Run). It is safe to run more than once and adds any missing columns.
