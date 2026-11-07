@@ -1,6 +1,6 @@
 // Simple service worker: makes the app installable and quick to reopen.
 // If you ever change app files and phones keep showing the old version, bump CACHE.
-const CACHE = "ebony-hub-v5";
+const CACHE = "ebony-hub-v6";
 const SHELL = [
   "./", "index.html", "styles.css", "app.js", "config.js",
   "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png"
