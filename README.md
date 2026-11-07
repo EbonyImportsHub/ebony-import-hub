@@ -12,7 +12,7 @@ Setup takes about 20 minutes and you only do it once.
 ## Step 1: Create the database (Supabase)
 
 1. Go to https://supabase.com, sign up, and click **New project**. Pick any name (e.g. `ebony-hub`), set a database password (save it somewhere, you won't need it day to day), and choose the region closest to you.
-2. When the project is ready, open **SQL Editor** > **New query**. Open the file `supabase.sql` from this folder, copy everything, paste it in, and click **Run**. You should see "Success".
+2. When the project is ready, open **SQL Editor** > **New query**. Open the file `supabase.sql` from this folder, copy everything, paste it in, and click **Run**. You should see "Success". Then do the same with `settings.sql` (New query, paste, Run).
 3. Create your owner login: go to **Authentication** > **Users** > **Add user** > **Create new user**. Enter your email and the password you want to use on all your devices. Tick **Auto Confirm User**. Use a long password (12+ characters) because it protects your whole shop.
 4. **Important:** in the Authentication settings, turn **off** "Allow new users to sign up". This makes sure nobody else can create an account.
 5. Go to **Project Settings** > **API** (or **Data API**). Copy the **Project URL** and the **anon public** key. You need both in the next step.
@@ -54,4 +54,34 @@ Customers tap a product to see all photos and the breakdown (item price + shippi
 
 - To change your password later: Supabase > Authentication > Users.
 - Free Supabase projects can be paused if nobody uses them for a while. If the shop ever shows "Couldn't load products", open your Supabase dashboard and restore the project.
-- If you edit app files later and phones keep showing the old version, change `ebony-hub-v1` to `ebony-hub-v2` in `sw.js`.
+- If you edit app files later and phones keep showing the old version, raise the number after `ebony-hub-v` in `sw.js` by one (for example `ebony-hub-v3` to `ebony-hub-v4`).
+
+## Owner settings
+
+In the owner area, tap **Settings** to:
+
+- **Change your password.** Use the new password on all devices from then on.
+- **Sign out of all devices** if a phone is lost.
+- **Edit shop details** (WhatsApp number, email, TikTok, WhatsApp group link, business name) without touching `config.js`.
+- **Set an announcement banner** shown at the top of the shop. Clear the box to hide it.
+
+This needs `settings.sql` to have been run once in Supabase.
+
+## Batches and smaller previews
+
+Run `batches.sql` once in Supabase (SQL Editor, New query, paste, Run). Then, in the owner area:
+
+- **Batches** button: create your **Ongoing** batch and your **Coming next** batch. Set the last day to preorder and the expected arrival (both optional). A batch hides itself from the shop after its last day, or tap **Close batch**.
+- **Add product / Edit product**: tick the batch(es) a product belongs to. Leave all unticked to show it in every batch.
+- Customers see batch tabs at the top of the shop, switch between them, and see the dates. The batch they pick is included in their WhatsApp message.
+- If you create no batches, the shop works exactly as before.
+
+Product photos now also get a small preview for the shop grid, so pages load faster and use less data. Products added before this update use their full photo in the grid until you open **Edit** and **Save** them once.
+
+## Shipping rules page
+
+Run `rules.sql` once in Supabase (SQL Editor, New query, paste, Run). Then, in the owner area, tap **Settings** and fill in **Shipping rules page**:
+
+- Start a line with `# ` for a heading and `- ` for a bullet point. Leave a blank line between sections.
+- Tap **Save rules**. Use **Preview page** to see what customers will see.
+- Customers get a **Shipping rules & how to order** button at the top of the shop, plus a **Shipping rules** link at the bottom. If you leave the box empty, the button at the top is hidden.
