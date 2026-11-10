@@ -63,3 +63,10 @@ The app follows the phone or laptop setting on its own. If the phone is in dark 
 ## Updating the database
 
 Run `run-once-database-update.sql` in Supabase (SQL Editor, New query, paste, Run). It adds everything the newest version needs (shipping rules, batches, small previews, sizes and colours). It is safe to run more than once.
+
+## Orders, bank transfer and receipts (update)
+
+1. In Supabase: SQL Editor, New query, paste the whole of `run-once-database-update.sql` (or just `orders.sql`), press Run. Safe to run twice.
+2. Upload the new app files to GitHub (everything except `config.js`).
+3. Log in as owner, tap Settings, then **Payment accounts**: add your bank, account number and name, and Save. The "Pay by bank transfer" button only appears for customers once you have added an account.
+4. Owner dashboard now has an **Orders** button: pick a day, see totals, who paid in the app, who sent receipt on WhatsApp, who ordered on WhatsApp. Open an order, check your bank, then tap **Confirm payment**. The customer's order page changes to "Confirmed" by itself.

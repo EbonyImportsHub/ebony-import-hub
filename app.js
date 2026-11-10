@@ -15,6 +15,37 @@
   // small preview for the grid; falls back to the full photo for older products
   const thumbOf = (p) => p.thumb_url || (p.image_urls && p.image_urls[0]) || "";
   const list = (v) => (Array.isArray(v) ? v.filter(Boolean) : []);
+
+  // Sizes: a range like "38-44" becomes 38, 39, 40 ... 44 and "S-XL" becomes S, M, L, XL.
+  // Anything else is kept exactly as typed. Used in the shop and in the owner form.
+  const LETTER_SIZES = ["XXS", "XS", "S", "M", "L", "XL", "XXL", "XXXL", "4XL", "5XL"];
+  const letterIdx = (s) => LETTER_SIZES.indexOf(String(s).toUpperCase().replace(/^2XL$/, "XXL").replace(/^3XL$/, "XXXL"));
+  function expandSizes(v) {
+    const raw = Array.isArray(v) ? v.join(",") : String(v || "");
+    const out = [];
+    raw.replace(/[–—]/g, "-").split(/[,;\n]/).forEach((tok) => {
+      const t = tok.trim().replace(/\s+to\s+/i, "-");
+      if (!t) return;
+      const n = t.match(/^(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)$/);
+      if (n) {
+        const lo = Math.min(parseFloat(n[1]), parseFloat(n[2])), hi = Math.max(parseFloat(n[1]), parseFloat(n[2]));
+        const step = (lo % 1 || hi % 1) ? 0.5 : 1;
+        if ((hi - lo) / step <= 40) {
+          for (let x = lo; x <= hi + 1e-9; x += step) out.push(String(Math.round(x * 100) / 100));
+          return;
+        }
+      }
+      const l = t.match(/^([a-z0-9]{1,4})\s*-\s*([a-z0-9]{1,4})$/i);
+      if (l && letterIdx(l[1]) >= 0 && letterIdx(l[2]) >= 0) {
+        const a = Math.min(letterIdx(l[1]), letterIdx(l[2])), z = Math.max(letterIdx(l[1]), letterIdx(l[2]));
+        out.push(...LETTER_SIZES.slice(a, z + 1));
+        return;
+      }
+      out.push(t.slice(0, 24));
+    });
+    return out.filter((s, i, a) => a.indexOf(s) === i).slice(0, 40);
+  }
+  const sizesOf = (p) => expandSizes(list(p.sizes));
   const pad2 = (n) => String(n).padStart(2, "0");
 
   // Things the customer's own device remembers (cart, saved items)
@@ -56,6 +87,7 @@
   let page = null; // state of the product page being viewed
   let navDepth = 0;
   let settings = {};
+  let ordersOk = false; // true once orders.sql has been run in Supabase
 
   let cart = LS.get(CART_KEY, []);
   if (!Array.isArray(cart)) cart = [];
@@ -162,6 +194,7 @@
       if (!p) reason = "No longer listed";
       else if (!p.in_stock) reason = "Sold out";
       else if (batches.length && !(b && isOpen(b) && productBatches(p).some((x) => x.id === b.id))) reason = "This batch is closed";
+      else if (i.size && sizesOf(p).length && !sizesOf(p).includes(i.size)) reason = "Size changed. Remove it and pick a size again";
       return { ...i, p, b, ok: !reason, reason };
     });
   }
@@ -180,7 +213,7 @@
     saveCart();
   }
 
-  function orderMessage(ok) {
+  function orderMessage(ok, extra) {
     const groups = [];
     ok.forEach((i) => {
       const k = i.bid || "";
@@ -196,6 +229,8 @@
       if (groups.length === 1 && g.b) out.push(`Batch: ${g.b.name}`);
     });
     out.push(`Total: ${naira(sums(ok).total)}`);
+    if (extra && extra.name) out.push(`Name: ${extra.name}`);
+    if (extra && extra.code) out.push(`Order ref: ${extra.code}`);
     return out.join("\n");
   }
 
@@ -236,7 +271,7 @@
   function updateDock() {
     const r = route();
     if (r.startsWith("/p/")) return; // the product page draws its own bar
-    if (r.startsWith("/cart") || r.startsWith("/owner") || !loaded) return setDock("");
+    if (r.startsWith("/cart") || r.startsWith("/order") || r.startsWith("/owner") || !loaded) return setDock("");
     const ok = resolveCart().filter((i) => i.ok);
     if (!ok.length) return setDock("");
     const t = sums(ok);
@@ -306,6 +341,9 @@
   async function loadSettings() {
     const { data, error } = await sb.from("settings").select("*").eq("id", 1).maybeSingle();
     if (!error && data) settings = data; // if the table isn't set up yet, config.js values are used
+    const probe = await sb.from("settings").select("accounts,pay_note").limit(1);
+    ordersOk = !probe.error;
+    if (ordersOk && !Array.isArray(settings.accounts)) settings = { ...settings, accounts: [] };
   }
 
   async function loadBatches() {
@@ -320,10 +358,13 @@
     if (!sb) return;
     const r = route();
     if (!r.startsWith("/p/")) page = null;
+    stopPoll();
     window.scrollTo(0, 0);
     if (r.startsWith("/owner")) renderOwner();
     else if (r.startsWith("/info")) renderInfo();
     else if (r.startsWith("/cart")) renderCart();
+    else if (r.startsWith("/orders")) renderMyOrders();
+    else if (r.startsWith("/order/")) renderOrder(decodeURIComponent(r.slice(7)));
     else if (r.startsWith("/p/")) renderProduct(decodeURIComponent(r.slice(3)));
     else renderShop();
     updateHeader();
@@ -459,7 +500,7 @@
       return;
     }
     const avail = batches.length ? productBatches(p) : [];
-    const sizes = list(p.sizes), cols = list(p.colours);
+    const sizes = sizesOf(p), cols = list(p.colours);
     if (!page || page.pid !== id) {
       page = {
         pid: id,
@@ -510,7 +551,7 @@
   }
 
   function drawProductControls(p, avail) {
-    const sizes = list(p.sizes), cols = list(p.colours);
+    const sizes = sizesOf(p), cols = list(p.colours);
     const b = avail.find((x) => x.id === page.bid) || null;
     // batch
     let bh = "";
@@ -586,8 +627,34 @@
       g.items.push(i);
     });
     const t = sums(ok);
-    const canSend = ok.length > 0 && !bad.length && waNum();
-    const msg = ok.length ? orderMessage(ok) : "";
+    const canSend = ok.length > 0 && !bad.length;
+    const cust = LS.get(CUST_KEY, {}) || {};
+    let checkout = "";
+    if (!canSend) {
+      checkout = `<button type="button" class="btn btn-wa wide" disabled>${ICON.wa} Send order on WhatsApp</button>`;
+    } else if (!ordersOk) {
+      // orders.sql not run yet: the original WhatsApp-only checkout still works
+      const msg = orderMessage(ok);
+      checkout = waNum()
+        ? `<div style="display:flex;flex-direction:column;gap:10px"><a class="btn btn-wa wide" id="sendWa" href="https://wa.me/${waNum()}?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">${ICON.wa} Send order on WhatsApp</a>
+           <span class="cnote">This opens WhatsApp with your full order list ready to send.</span></div>
+           <div class="msgbox"><span class="eyebrow">Your message</span><pre>${esc(msg)}</pre></div>`
+        : `<button type="button" class="btn btn-wa wide" disabled>${ICON.wa} Send order on WhatsApp</button>`;
+    } else {
+      const tr = canTransfer();
+      checkout = `<div class="box o-co">
+        <span class="eyebrow">How would you like to order?</span>
+        <div class="field"><label for="c-name">Your name</label><input id="c-name" type="text" maxlength="80" autocomplete="name" value="${esc(cust.name || "")}"></div>
+        <div class="field"><label for="c-phone">Phone number</label><input id="c-phone" type="text" inputmode="tel" maxlength="30" autocomplete="tel" value="${esc(cust.phone || "")}">
+          <span class="hint">Needed for bank transfer so we can match your payment. Optional for WhatsApp.</span></div>
+        <p class="error" id="coErr" role="alert" hidden></p>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          ${tr ? `<button type="button" class="btn btn-gold wide" id="payTr">Pay by bank transfer</button>
+          <span class="cnote">You will see our account numbers. Pay, then upload your receipt here or send it on WhatsApp. We confirm your order once the money arrives.</span>` : ""}
+          <button type="button" class="btn btn-wa wide" id="payWa">${ICON.wa} Send order on WhatsApp</button>
+          <span class="cnote">${waNum() ? "Opens WhatsApp with your order list ready to send. " : ""}Your order is also saved here so you can track it.</span>
+        </div></div>`;
+    }
     app.innerHTML = `<div class="view cartpage">${head}
       ${groups.map((g) => `${g.b ? `<div class="from"><span class="eyebrow">Ordering from</span><b>${esc(g.b.name)}</b><span class="b-info">${batchInfo(g.b)}</span></div>` : ""}
         <div style="display:flex;flex-direction:column;gap:12px">${g.items.map(row).join("")}</div>`).join("")}
@@ -596,13 +663,44 @@
         <div class="row"><span>Items</span><span>${naira(t.items)}</span></div>
         <div class="row"><span>Shipping</span><span>${naira(t.ship)}</span></div>
         <hr><div class="big"><span class="lbl">TOTAL</span><span class="amt">${naira(t.total)}</span></div></div>` : ""}
-      ${canSend
-        ? `<div style="display:flex;flex-direction:column;gap:10px"><a class="btn btn-wa wide" id="sendWa" href="https://wa.me/${waNum()}?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">${ICON.wa} Send order on WhatsApp</a>
-           <span class="cnote">This opens WhatsApp with your full order list ready to send.</span></div>
-           <div class="msgbox"><span class="eyebrow">Your message</span><pre>${esc(msg)}</pre></div>`
-        : `<button type="button" class="btn btn-wa wide" disabled>${ICON.wa} Send order on WhatsApp</button>`}
+      ${checkout}
       <button type="button" class="btn btn-ghost" id="clearCart">Clear cart</button>
+      ${myOrders.length ? `<a class="linkbtn" style="text-align:center;display:block;padding-top:12px" href="#/orders">My orders</a>` : ""}
     </div>`;
+    const placeOrder = async (method) => {
+      const err = $id("coErr");
+      const name = $id("c-name").value.trim(), phone = $id("c-phone").value.trim();
+      LS.set(CUST_KEY, { name, phone });
+      err.hidden = true;
+      if (method === "transfer" && (!name || phone.replace(/\D/g, "").length < 10)) {
+        err.textContent = "Please enter your name and a valid phone number so we can match your payment.";
+        err.hidden = false;
+        return;
+      }
+      const btns = [$id("payWa"), $id("payTr")].filter(Boolean);
+      btns.forEach((x) => { x.disabled = true; });
+      // open the WhatsApp tab right now (browsers only allow it straight after a tap), fill it in once the order is saved
+      let w = null;
+      if (method === "whatsapp" && waNum()) { try { w = window.open("about:blank", "_blank"); } catch (_) { w = null; } }
+      const { data, error } = await sb.rpc("place_order", {
+        p_items: ok.map((i) => ({ pid: i.pid, bid: i.bid, size: i.size, colour: i.colour, qty: i.qty })),
+        p_method: method, p_name: name, p_phone: phone,
+      });
+      if (error || !data) {
+        if (w) { try { w.close(); } catch (_) {} }
+        err.textContent = (error && error.message) || "Couldn't place the order. Please try again.";
+        err.hidden = false;
+        btns.forEach((x) => { x.disabled = false; });
+        return;
+      }
+      myOrders.unshift({ code: data.code, token: data.token, at: Date.now() });
+      saveOrders();
+      if (w) { try { w.location.href = `https://wa.me/${waNum()}?text=${encodeURIComponent(orderMessage(ok, { code: data.code, name }))}`; } catch (_) {} }
+      cart = []; saveCart();
+      location.hash = "#/order/" + data.token;
+    };
+    if ($id("payWa")) $id("payWa").onclick = () => placeOrder("whatsapp");
+    if ($id("payTr")) $id("payTr").onclick = () => placeOrder("transfer");
     $id("cBack").onclick = goBack;
     $id("clearCart").onclick = () => {
       if (!confirm("Remove everything from your cart?")) return;
@@ -617,6 +715,170 @@
       if (b.dataset.act === "remove") cart = cart.filter((i) => i !== line);
       saveCart(); renderCart(); updateHeader(); updateDock();
     };
+  }
+
+  /* ---------------- Orders (customer side) ---------------- */
+
+  const ORD_KEY = "ebony_orders_v1", CUST_KEY = "ebony_cust_v1";
+  let myOrders = LS.get(ORD_KEY, []);
+  if (!Array.isArray(myOrders)) myOrders = [];
+  myOrders = myOrders.filter((o) => o && typeof o.token === "string" && typeof o.code === "string");
+  const saveOrders = () => LS.set(ORD_KEY, myOrders.slice(0, 20));
+  const accountsList = () => (Array.isArray(settings.accounts) ? settings.accounts : []).filter((a) => a && String(a.number || "").trim());
+  const canTransfer = () => ordersOk && accountsList().length > 0;
+  let pollT = null;
+  const stopPoll = () => { if (pollT) { clearInterval(pollT); pollT = null; } };
+  const fmtWhen = (iso) => { try { return new Date(iso).toLocaleString("en-NG", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }); } catch (_) { return ""; } };
+
+  const STATUS_TXT = {
+    requested: "Sent on WhatsApp", awaiting_payment: "Awaiting payment", receipt_sent: "Receipt received",
+    confirmed: "Confirmed", cancelled: "Cancelled",
+  };
+  const statusChip = (st) => `<span class="o-chip st-${esc(st)}">${esc(STATUS_TXT[st] || st)}</span>`;
+
+  async function fetchOrders(tokens) {
+    const { data, error } = await sb.rpc("get_orders", { p_tokens: tokens });
+    if (error) throw error;
+    return Array.isArray(data) ? data : [];
+  }
+
+  function orderMsgFromRow(o) {
+    const out = [`Hello ${bizName()}, I would like to preorder:`];
+    (o.items || []).forEach((i) => {
+      const v = [i.size ? `Size ${i.size}` : "", i.colour].filter(Boolean).join(", ");
+      out.push(`${i.qty} × ${i.name}${v ? ` (${v})` : ""} – ${naira((Number(i.price) + Number(i.ship)) * i.qty)}`);
+    });
+    out.push(`Total: ${naira(o.total)}`);
+    if (o.name) out.push(`Name: ${o.name}`);
+    out.push(`Order ref: ${o.code}`);
+    return out.join("\n");
+  }
+
+  async function copyText(txt) {
+    try { await navigator.clipboard.writeText(txt); toast("Copied"); return; } catch (_) {}
+    try {
+      const ta = document.createElement("textarea"); ta.value = txt; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); toast("Copied");
+    } catch (_) { toast("Copy didn't work. Please type the number."); }
+  }
+
+  function orderSteps(o) {
+    const transfer = o.method === "transfer";
+    const names = transfer ? ["Order placed", "Payment sent", "Confirmed"] : ["Sent on WhatsApp", "Confirmed"];
+    let at = 0;
+    if (o.status === "receipt_sent") at = 1;
+    if (o.status === "confirmed") at = names.length - 1;
+    return `<ol class="o-steps">${names.map((n, i) => `<li class="${o.status === "confirmed" || i < at ? "done" : i === at ? "now" : ""}"><i>${o.status === "confirmed" || i < at ? "✓" : i + 1}</i><span>${esc(n)}</span></li>`).join("")}</ol>`;
+  }
+
+  async function renderOrder(token) {
+    if (!loaded) return skeleton();
+    app.innerHTML = `<div class="view cartpage"><div class="chead"><button type="button" class="iconbtn" id="oBack" aria-label="Back">${ICON.back}</button><h1>Your order</h1></div><p class="muted" style="padding:12px 4px">Loading your order…</p></div>`;
+    $id("oBack").onclick = () => { location.hash = "#/"; };
+    const load = async () => { try { return (await fetchOrders([token]))[0] || null; } catch (_) { return undefined; } };
+    let o = await load();
+    if (route() !== "/order/" + token) return;
+    if (o === undefined || o === null) {
+      app.innerHTML = `<div class="view cartpage"><div class="chead"><button type="button" class="iconbtn" id="oBack" aria-label="Back">${ICON.back}</button><h1>Your order</h1></div>
+        <div class="empty"><p>${o === null ? "We couldn't find this order." : "Couldn't load your order. Check your connection and try again."}</p><a class="btn btn-gold" href="#/">Back to shop</a></div></div>`;
+      $id("oBack").onclick = () => { location.hash = "#/"; };
+      return;
+    }
+    let busy = false;
+    const draw = () => {
+      const transfer = o.method === "transfer";
+      const open = o.status !== "confirmed" && o.status !== "cancelled";
+      const accts = accountsList();
+      const waBase = waNum() ? `https://wa.me/${waNum()}?text=` : "";
+      let banner = "";
+      if (o.status === "confirmed") banner = `<div class="o-banner ok"><b>Order confirmed ✓</b><span>${o.confirmed_at ? "Confirmed " + esc(fmtWhen(o.confirmed_at)) + ". " : ""}Thank you! We will update you on shipping.</span></div>`;
+      else if (o.status === "cancelled") banner = `<div class="o-banner bad"><b>Order cancelled</b><span>If this is a mistake, please message us on WhatsApp with your order number.</span></div>`;
+      else if (o.status === "receipt_sent") banner = `<div class="o-banner wait"><b>Receipt received</b><span>${o.receipt_via === "whatsapp" ? "You said you sent it on WhatsApp. " : ""}We are checking your payment. This page updates by itself once we confirm.</span></div>`;
+      else if (o.status === "awaiting_payment") banner = `<div class="o-banner wait"><b>Waiting for your payment</b><span>Pay ${esc(naira(o.total))} to one of the accounts below, then send us your receipt.</span></div>`;
+      else banner = `<div class="o-banner wait"><b>Order sent on WhatsApp</b><span>We will confirm it with you there. This page shows when it is confirmed.</span></div>`;
+      const lines = (o.items || []).map((i) => `<div class="o-line"><span>${esc(i.qty)} × ${esc(i.name)}${i.size || i.colour ? ` <small>(${esc([i.size ? "Size " + i.size : "", i.colour].filter(Boolean).join(", "))})</small>` : ""}</span><b>${naira((Number(i.price) + Number(i.ship)) * i.qty)}</b></div>`).join("");
+      const acctHtml = transfer && open ? `<div class="box o-pay">
+          <span class="eyebrow">Pay to</span>
+          ${accts.length ? accts.map((a, n) => `<div class="o-acct"><div><small>${esc(a.bank || "Bank")}</small><b>${esc(a.number)}</b><span>${esc(a.name || "")}</span></div><button type="button" class="btn btn-ghost btn-sm" data-copy="${n}">Copy</button></div>`).join("") : `<p class="muted">Account details will be shared on WhatsApp.</p>`}
+          <div class="o-amt"><span>Amount to pay</span><b>${naira(o.total)}</b></div>
+          <p class="cnote" style="text-align:left">Use <b>${esc(o.code)}</b> as the payment reference/narration if your bank lets you.</p>
+          ${settings.pay_note ? `<p class="cnote" style="text-align:left">${esc(settings.pay_note)}</p>` : ""}
+        </div>
+        <div class="box o-rcpt">
+          <span class="eyebrow">${o.status === "receipt_sent" ? "Send a different receipt" : "Paid? Send your receipt"}</span>
+          <p class="err-line error" id="rErr" role="alert" hidden></p>
+          <input id="rFile" type="file" accept="image/*" hidden>
+          <button type="button" class="btn btn-gold wide" id="rUp">Upload receipt here</button>
+          ${waBase ? `<a class="btn btn-wa wide" id="rWa" href="${waBase}${encodeURIComponent(`Hello ${bizName()}, I have paid ${naira(o.total)} for order ${o.code}. I am sending my receipt now.`)}" target="_blank" rel="noopener">${ICON.wa} I'll send the receipt on WhatsApp</a>` : ""}
+          <span class="cnote">We will confirm your order once the money reaches our account.</span>
+        </div>` : "";
+      const waOnly = !transfer && o.status === "requested" && waBase
+        ? `<a class="btn btn-wa wide" href="${waBase}${encodeURIComponent(orderMsgFromRow(o))}" target="_blank" rel="noopener">${ICON.wa} Open WhatsApp to send this order</a><span class="cnote">If you already sent it, you don't need to do anything.</span>` : "";
+      app.innerHTML = `<div class="view cartpage">
+        <div class="chead"><button type="button" class="iconbtn" id="oBack" aria-label="Back">${ICON.back}</button><h1>${esc(o.code)}</h1>${statusChip(o.status)}</div>
+        ${banner}${orderSteps(o)}
+        <div class="box"><div class="o-lines">${lines}</div>
+          <div class="o-line"><span>Shipping included</span><b>${naira(o.ship_total)}</b></div>
+          <div class="o-line o-tot"><span>Total</span><b>${naira(o.total)}</b></div>
+          <p class="cnote" style="text-align:left;margin-top:8px">Placed ${esc(fmtWhen(o.created_at))}</p></div>
+        ${acctHtml}${waOnly}
+        <a class="btn btn-ghost" href="#/orders">All my orders</a>
+        <a class="linkbtn" style="text-align:center;display:block" href="#/">Back to shop</a></div>`;
+      $id("oBack").onclick = () => { location.hash = "#/"; };
+      app.querySelectorAll("[data-copy]").forEach((b) => { b.onclick = () => copyText(String(accts[+b.dataset.copy].number)); });
+      if ($id("rUp")) {
+        $id("rUp").onclick = () => $id("rFile").click();
+        $id("rFile").onchange = async (e) => {
+          const f = e.target.files && e.target.files[0]; if (!f) return;
+          const btn = $id("rUp"), err = $id("rErr");
+          err.hidden = true; btn.disabled = true; btn.textContent = "Uploading…"; busy = true;
+          try {
+            const blob = await compress(f, 1600, 0.85);
+            if (!blob) throw new Error("read");
+            const path = `${token}/${crypto.randomUUID()}.jpg`;
+            const up = await sb.storage.from("receipts").upload(path, blob, { contentType: "image/jpeg" });
+            if (up.error) throw up.error;
+            const { error } = await sb.rpc("attach_receipt", { p_token: token, p_path: path, p_via: "app" });
+            if (error) throw error;
+            busy = false; toast("Receipt sent. Thank you!");
+            const n = await load(); if (n) o = n; else o = { ...o, status: "receipt_sent", receipt_via: "app" };
+            draw();
+          } catch (ex) {
+            busy = false;
+            err.textContent = ex && ex.message && ex.message !== "read" && !/image|bitmap|decode/i.test(ex.message) ? ex.message : "We couldn't read that photo. Try a screenshot of the receipt instead.";
+            err.hidden = false; btn.disabled = false; btn.textContent = "Upload receipt here";
+          }
+        };
+      }
+      if ($id("rWa")) $id("rWa").addEventListener("click", async () => {
+        const { error } = await sb.rpc("attach_receipt", { p_token: token, p_path: null, p_via: "whatsapp" });
+        if (!error) { const n = await load(); if (n) { o = n; setTimeout(() => { if (route() === "/order/" + token && !busy) draw(); }, 400); } }
+      });
+    };
+    draw();
+    stopPoll();
+    pollT = setInterval(async () => {
+      if (route() !== "/order/" + token) return stopPoll();
+      if (busy || document.hidden) return;
+      const n = await load();
+      if (n && (n.status !== o.status || n.receipt_via !== o.receipt_via)) { o = n; draw(); if (n.status === "confirmed") toast("Your order is confirmed ✓"); }
+    }, 20000);
+  }
+
+  async function renderMyOrders() {
+    if (!loaded) return skeleton();
+    const head = `<div class="chead"><button type="button" class="iconbtn" id="oBack" aria-label="Back">${ICON.back}</button><h1>My orders</h1></div>`;
+    app.innerHTML = `<div class="view cartpage">${head}<p class="muted" style="padding:12px 4px">Loading…</p></div>`;
+    $id("oBack").onclick = () => { location.hash = "#/"; };
+    let rows = [], failed = false;
+    if (myOrders.length) { try { rows = await fetchOrders(myOrders.map((o) => o.token)); } catch (_) { failed = true; } }
+    if (route() !== "/orders") return;
+    app.innerHTML = `<div class="view cartpage">${head}
+      ${rows.length ? `<div style="display:flex;flex-direction:column;gap:12px">${rows.map((o) => `<a class="box o-row" href="#/order/${esc(o.token)}"><div><b>${esc(o.code)}</b><small>${esc(fmtWhen(o.created_at))} · ${o.method === "transfer" ? "Bank transfer" : "WhatsApp"}</small></div><div class="o-r2"><b>${naira(o.total)}</b>${statusChip(o.status)}</div></a>`).join("")}</div>
+        <p class="cnote">Orders are saved on this phone. Clearing your browser data removes this list.</p>`
+        : `<div class="empty"><p>${failed ? "Couldn't load your orders. Check your connection." : "You haven't placed any orders on this phone yet."}</p><a class="btn btn-gold" href="#/">Browse products</a></div>`}
+    </div>`;
+    $id("oBack").onclick = () => { location.hash = "#/"; };
   }
 
   /* ---------------- Shipping rules ---------------- */
@@ -688,11 +950,13 @@
   function renderDashboard() {
     app.innerHTML = `
       <div class="owner-bar"><h1>Owner dashboard</h1><button class="btn btn-ghost btn-sm" id="logout">Log out</button></div>
-      <div class="actions"><button class="btn btn-gold" id="addBtn">+ Add product</button><button class="btn btn-ghost" id="batchBtn">Batches</button><button class="btn btn-ghost" id="setBtn">Settings</button><a class="btn btn-ghost" href="#/">View shop</a></div>
+      <div class="actions"><button class="btn btn-gold" id="ordersBtn">Orders<span class="o-badge" id="ordBadge" hidden>0</span></button><button class="btn btn-ghost" id="addBtn">+ Add product</button><button class="btn btn-ghost" id="batchBtn">Batches</button><button class="btn btn-ghost" id="setBtn">Settings</button><a class="btn btn-ghost" href="#/">View shop</a></div>
       <div id="formHost"></div>
       <div class="olist" id="olist"></div>`;
     $id("logout").onclick = async () => { await sb.auth.signOut(); session = null; renderLogin(); };
+    $id("ordersBtn").onclick = () => openOrders();
     $id("addBtn").onclick = () => openForm(null);
+    refreshOrdBadge();
     $id("batchBtn").onclick = () => openBatchManager();
     $id("setBtn").onclick = () => openSettings();
     drawOwnerList();
@@ -875,6 +1139,19 @@
       </div>
 
       <div class="panel" style="margin-top:16px">
+        <h2 style="margin:0 0 6px;font-size:18px">Payment accounts</h2>
+        <p style="margin:0 0 14px;color:var(--muted);font-size:14px">Customers who choose bank transfer see these accounts. Leave empty to hide the transfer option.</p>
+        <form id="aform">
+          <div id="aRows"></div>
+          <div class="actions" style="margin-bottom:14px"><button type="button" class="btn btn-ghost btn-sm" id="aAdd">+ Add account</button></div>
+          <div class="field"><label for="a-note">Note shown with the accounts (optional)</label>
+            <textarea id="a-note" maxlength="300" placeholder="e.g. Please send your receipt within 24 hours.">${esc(settings.pay_note || "")}</textarea></div>
+          <p class="error" id="aerr" role="alert" hidden></p>
+          <div class="actions"><button class="btn btn-gold" type="submit" id="aBtn">Save accounts</button></div>
+        </form>
+      </div>
+
+      <div class="panel" style="margin-top:16px">
         <h2 style="margin:0 0 14px;font-size:18px">Shipping rules page</h2>
         <form id="rform">
           <div class="field"><label for="r-text">Rules and instructions customers will read</label>
@@ -909,6 +1186,41 @@
     host.scrollIntoView({ behavior: "smooth", block: "start" });
 
     $("closeSet").onclick = () => { host.innerHTML = ""; };
+
+    let accts = accountsList().map((a) => ({ bank: a.bank || "", number: a.number || "", name: a.name || "" }));
+    const drawAcctRows = () => {
+      $("aRows").innerHTML = accts.map((a, i) => `<div class="o-arow" data-i="${i}">
+        <input type="text" class="a-bank" maxlength="40" placeholder="Bank (e.g. GTBank)" value="${esc(a.bank)}" aria-label="Bank name">
+        <input type="text" class="a-num" inputmode="numeric" maxlength="20" placeholder="Account number" value="${esc(a.number)}" aria-label="Account number">
+        <input type="text" class="a-name" maxlength="60" placeholder="Account name" value="${esc(a.name)}" aria-label="Account name">
+        <button type="button" class="linkbtn" data-del="${i}">Remove</button></div>`).join("") || `<p class="muted" style="margin:0 0 12px">No accounts yet.</p>`;
+      $("aRows").querySelectorAll("[data-del]").forEach((b) => { b.onclick = () => { readAcctRows(); accts.splice(+b.dataset.del, 1); drawAcctRows(); }; });
+    };
+    const readAcctRows = () => {
+      accts = [...$("aRows").querySelectorAll(".o-arow")].map((r) => ({ bank: r.querySelector(".a-bank").value, number: r.querySelector(".a-num").value, name: r.querySelector(".a-name").value }));
+    };
+    drawAcctRows();
+    $("aAdd").onclick = () => { readAcctRows(); if (accts.length >= 5) return toast("Up to 5 accounts"); accts.push({ bank: "", number: "", name: "" }); drawAcctRows(); };
+    $("aform").onsubmit = async (e) => {
+      e.preventDefault();
+      readAcctRows();
+      const btn = $("aBtn"), err = $("aerr");
+      err.hidden = true;
+      const clean = accts.map((a) => ({ bank: a.bank.trim(), number: a.number.replace(/\s/g, ""), name: a.name.trim() })).filter((a) => a.number || a.bank || a.name);
+      if (clean.some((a) => !/^\d{6,20}$/.test(a.number))) { err.textContent = "Each account needs an account number (digits only)."; err.hidden = false; return; }
+      btn.disabled = true; btn.textContent = "Saving…";
+      const { data, error } = await sb.from("settings").upsert({ id: 1, accounts: clean, pay_note: $("a-note").value.trim(), updated_at: new Date().toISOString() }).select().single();
+      btn.disabled = false; btn.textContent = "Save accounts";
+      if (error) {
+        err.textContent = /accounts|pay_note|schema cache|column|does not exist/i.test(error.message)
+          ? "Payments aren't set up yet. Run orders.sql in Supabase (see README), then try again."
+          : error.message;
+        err.hidden = false;
+        return;
+      }
+      settings = data; ordersOk = true;
+      toast("Saved");
+    };
 
     $("rform").onsubmit = async (e) => {
       e.preventDefault();
@@ -997,6 +1309,160 @@
     };
   }
 
+  /* ---------- Owner: orders ---------- */
+
+  let ordDay = null, ordFilter = "all", ordTimer = null;
+  const lagosDay = (iso) => new Date(new Date(iso).getTime() + 3600000).toISOString().slice(0, 10);
+  const addDays = (d, n) => { const t = new Date(d + "T12:00:00Z"); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); };
+  const dayStart = (d) => new Date(d + "T00:00:00+01:00").toISOString();
+  const waPhone = (p) => { let d = String(p || "").replace(/\D/g, ""); if (d.length === 11 && d[0] === "0") d = "234" + d.slice(1); return d; };
+  const dayLabel = (d) => { const [y, m, dd] = d.split("-").map(Number); return new Date(y, m - 1, dd).toLocaleDateString("en-NG", { weekday: "short", day: "numeric", month: "short" }); };
+  const METHOD_TXT = { whatsapp: "WhatsApp request", transfer: "Bank transfer" };
+  let ordRows = [];
+
+  async function refreshOrdBadge() {
+    const el = $id("ordBadge"); if (!el || !sb) return;
+    const { count, error } = await sb.from("orders").select("id", { count: "exact", head: true }).in("status", ["requested", "receipt_sent"]);
+    if (error || !count) { el.hidden = true; return; }
+    el.textContent = count > 99 ? "99+" : count; el.hidden = false;
+    el.title = "Orders waiting for you to confirm";
+  }
+
+  async function openOrders() {
+    const host = $id("formHost");
+    if (!ordDay) ordDay = lagosDay(new Date().toISOString());
+    host.innerHTML = `<div class="panel" style="margin-top:16px">
+      <div class="owner-bar" style="margin-top:0"><h2 style="margin:0;font-size:20px">Orders</h2><div class="actions"><button type="button" class="btn btn-ghost btn-sm" id="oRef">Refresh</button><button type="button" class="btn btn-ghost btn-sm" id="oClose">Close</button></div></div>
+      <div id="oBody"><p class="muted">Loading…</p></div></div>`;
+    host.scrollIntoView({ behavior: "smooth", block: "start" });
+    $id("oClose").onclick = () => { host.innerHTML = ""; clearInterval(ordTimer); };
+    $id("oRef").onclick = () => loadOrdersView();
+    clearInterval(ordTimer);
+    ordTimer = setInterval(() => { if (!$id("oBody")) return clearInterval(ordTimer); if (!document.hidden) loadOrdersView(true); }, 30000);
+    await loadOrdersView();
+  }
+
+  async function loadOrdersView(quiet) {
+    const body = $id("oBody"); if (!body) return;
+    const from = dayStart(addDays(ordDay, -6)), to = dayStart(addDays(ordDay, 1));
+    const { data, error } = await sb.from("orders").select("*").gte("created_at", from).lt("created_at", to).order("created_at", { ascending: false });
+    if (!$id("oBody")) return;
+    if (error) {
+      body.innerHTML = `<p class="error">${/orders|schema cache|does not exist/i.test(error.message) ? "Orders aren't set up yet. Run orders.sql in Supabase (see README), then try again." : esc(error.message)}</p>`;
+      return;
+    }
+    ordRows = data || [];
+    drawOrdersView();
+    refreshOrdBadge();
+  }
+
+  function drawOrdersView() {
+    const body = $id("oBody"); if (!body) return;
+    const today = lagosDay(new Date().toISOString());
+    const dayRows = ordRows.filter((o) => lagosDay(o.created_at) === ordDay);
+    const live = dayRows.filter((o) => o.status !== "cancelled");
+    const sum = (l) => l.reduce((t, o) => t + Number(o.total || 0), 0);
+    const tr = dayRows.filter((o) => o.method === "transfer");
+    const card = (label, n, sub, key) => `<button type="button" class="o-stat${ordFilter === key ? " on" : ""}" data-f="${key}"><small>${label}</small><b>${n}</b>${sub ? `<span>${sub}</span>` : ""}</button>`;
+    const cnt = (f) => dayRows.filter(f).length;
+    const FILTERS = {
+      all: () => true,
+      action: (o) => o.status === "receipt_sent" || o.status === "requested",
+      app: (o) => o.method === "transfer" && o.receipt_via === "app" && o.status !== "cancelled",
+      wareceipt: (o) => o.method === "transfer" && o.receipt_via === "whatsapp" && o.status !== "cancelled",
+      awaiting: (o) => o.status === "awaiting_payment",
+      wa: (o) => o.method === "whatsapp",
+      confirmed: (o) => o.status === "confirmed",
+      cancelled: (o) => o.status === "cancelled",
+    };
+    const shown = dayRows.filter(FILTERS[ordFilter] || FILTERS.all);
+    const week = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = addDays(ordDay, -i), r = ordRows.filter((o) => lagosDay(o.created_at) === d);
+      week.push({ d, n: r.length, tr: r.filter((o) => o.method === "transfer").length, wa: r.filter((o) => o.method === "whatsapp").length,
+        c: r.filter((o) => o.status === "confirmed").length, cv: sum(r.filter((o) => o.status === "confirmed")) });
+    }
+    const orderCard = (o) => {
+      const items = (o.items || []).map((i) => `${i.qty} × ${esc(i.name)}${i.size || i.colour ? ` (${esc([i.size, i.colour].filter(Boolean).join(", "))})` : ""}${i.batch ? ` · ${esc(i.batch)}` : ""}`).join("<br>");
+      const ph = waPhone(o.customer_phone);
+      const acts = [];
+      if (o.status !== "confirmed" && o.status !== "cancelled") acts.push(`<button type="button" class="btn btn-gold btn-sm" data-oact="confirm" data-id="${esc(o.id)}">Confirm${o.method === "transfer" ? " payment" : " order"}</button>`);
+      if (o.receipt_path) acts.push(`<button type="button" class="btn btn-ghost btn-sm" data-oact="receipt" data-id="${esc(o.id)}">View receipt</button>`);
+      if (ph) acts.push(`<a class="btn btn-ghost btn-sm" target="_blank" rel="noopener" href="https://wa.me/${ph}?text=${encodeURIComponent(`Hello ${o.customer_name || ""}, this is ${bizName()} about your order ${o.code}.`)}">WhatsApp customer</a>`);
+      if (o.status === "confirmed" || o.status === "cancelled") acts.push(`<button type="button" class="btn btn-ghost btn-sm" data-oact="reopen" data-id="${esc(o.id)}">Reopen</button>`);
+      if (o.status !== "cancelled" && o.status !== "confirmed") acts.push(`<button type="button" class="btn btn-danger btn-sm" data-oact="cancel" data-id="${esc(o.id)}">Cancel</button>`);
+      return `<div class="o-card" data-card="${esc(o.id)}">
+        <div class="o-top"><div><b>${esc(o.code)}</b><small>${esc(fmtWhen(o.created_at))} · ${esc(METHOD_TXT[o.method] || o.method)}</small></div><div class="o-r2"><b>${naira(o.total)}</b>${statusChip(o.status)}</div></div>
+        <div class="o-who">${esc(o.customer_name || "No name")}${o.customer_phone ? ` · ${esc(o.customer_phone)}` : ""}</div>
+        <div class="o-items">${items}</div>
+        ${o.receipt_via ? `<div class="o-rv">Receipt: ${o.receipt_via === "app" ? "uploaded in the app" : "customer says sent on WhatsApp"}${o.receipt_at ? " · " + esc(fmtWhen(o.receipt_at)) : ""}</div>` : ""}
+        <div class="o-img" data-img="${esc(o.id)}"></div>
+        <div class="actions" style="margin-top:10px">${acts.join("")}</div></div>`;
+    };
+    body.innerHTML = `
+      <div class="o-daynav">
+        <button type="button" class="btn btn-ghost btn-sm" id="dPrev" aria-label="Previous day">←</button>
+        <div class="field" style="margin:0;flex:1"><input id="dPick" type="date" max="${today}" value="${ordDay}" aria-label="Pick a day"></div>
+        <button type="button" class="btn btn-ghost btn-sm" id="dNext" aria-label="Next day" ${ordDay >= today ? "disabled" : ""}>→</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="dToday" ${ordDay === today ? "disabled" : ""}>Today</button>
+      </div>
+      <p class="o-daylabel"><b>${ordDay === today ? "Today" : esc(dayLabel(ordDay))}</b> · ${live.length} order${live.length === 1 ? "" : "s"} · ${naira(sum(live))}</p>
+      <div class="o-stats">
+        ${card("All orders", dayRows.length, naira(sum(live)), "all")}
+        ${card("Needs your action", cnt(FILTERS.action), "to confirm", "action")}
+        ${card("Paid on app", cnt(FILTERS.app), "receipt uploaded", "app")}
+        ${card("Receipt via WhatsApp", cnt(FILTERS.wareceipt), "paid, sent receipt", "wareceipt")}
+        ${card("Awaiting payment", cnt(FILTERS.awaiting), naira(sum(tr.filter(FILTERS.awaiting))), "awaiting")}
+        ${card("WhatsApp requests", cnt(FILTERS.wa), naira(sum(dayRows.filter(FILTERS.wa).filter((o) => o.status !== "cancelled"))), "wa")}
+        ${card("Confirmed", cnt(FILTERS.confirmed), naira(sum(dayRows.filter(FILTERS.confirmed))), "confirmed")}
+        ${card("Cancelled", cnt(FILTERS.cancelled), "", "cancelled")}
+      </div>
+      <div class="o-list">${shown.length ? shown.map(orderCard).join("") : `<p class="muted" style="text-align:center;padding:18px 0">${dayRows.length ? "No orders in this view." : "No orders on this day."}</p>`}</div>
+      <h3 class="o-h3">Last 7 days</h3>
+      <div class="o-week"><table><thead><tr><th>Day</th><th>Orders</th><th>Transfer</th><th>WhatsApp</th><th>Confirmed</th><th>Confirmed ₦</th></tr></thead><tbody>
+        ${week.map((w) => `<tr data-day="${w.d}" class="${w.d === ordDay ? "on" : ""}"><td>${w.d === today ? "Today" : esc(dayLabel(w.d))}</td><td>${w.n}</td><td>${w.tr}</td><td>${w.wa}</td><td>${w.c}</td><td>${naira(w.cv)}</td></tr>`).join("")}
+      </tbody></table></div>
+      <p class="cnote" style="text-align:left">Days follow Nigerian time. Only confirm an order after you have seen the money in your account.</p>`;
+
+    const go = (d) => { ordDay = d; ordFilter = "all"; loadOrdersView(); };
+    $id("dPrev").onclick = () => go(addDays(ordDay, -1));
+    $id("dNext").onclick = () => go(addDays(ordDay, 1));
+    $id("dToday").onclick = () => go(today);
+    $id("dPick").onchange = (e) => { if (e.target.value && e.target.value <= today) go(e.target.value); };
+    body.querySelectorAll("[data-f]").forEach((b) => { b.onclick = () => { ordFilter = b.dataset.f; drawOrdersView(); }; });
+    body.querySelectorAll("[data-day]").forEach((r) => { r.onclick = () => go(r.dataset.day); });
+    body.querySelector(".o-list").onclick = async (e) => {
+      const b = e.target.closest("[data-oact]"); if (!b) return;
+      const o = ordRows.find((x) => x.id === b.dataset.id); if (!o) return;
+      const act = b.dataset.oact;
+      if (act === "receipt") {
+        const holder = body.querySelector(`[data-img="${CSS.escape(o.id)}"]`);
+        if (holder.innerHTML) { holder.innerHTML = ""; return; }
+        b.disabled = true;
+        const { data, error } = await sb.storage.from("receipts").createSignedUrl(o.receipt_path, 600);
+        b.disabled = false;
+        if (error || !data) return toast("Couldn't open the receipt");
+        holder.innerHTML = `<a href="${esc(data.signedUrl)}" target="_blank" rel="noopener"><img class="o-rcptimg" src="${esc(data.signedUrl)}" alt="Payment receipt for ${esc(o.code)}"></a><span class="cnote">Tap the picture to open it full size.</span>`;
+        return;
+      }
+      let patch;
+      if (act === "confirm") {
+        if (!confirm(`Confirm ${o.code} for ${naira(o.total)}? The customer will see it as confirmed.`)) return;
+        patch = { status: "confirmed", confirmed_at: new Date().toISOString() };
+      } else if (act === "cancel") {
+        if (!confirm(`Cancel ${o.code}?`)) return;
+        patch = { status: "cancelled", confirmed_at: null };
+      } else if (act === "reopen") {
+        patch = { status: o.receipt_via ? "receipt_sent" : o.method === "transfer" ? "awaiting_payment" : "requested", confirmed_at: null };
+      } else return;
+      b.disabled = true;
+      const { error } = await sb.from("orders").update(patch).eq("id", o.id);
+      if (error) { b.disabled = false; return toast(error.message); }
+      toast(act === "confirm" ? "Confirmed. The customer can see it now." : "Updated");
+      loadOrdersView();
+    };
+  }
+
   /* ---------- Owner: product form ---------- */
 
   const pathFromUrl = (u) => { const i = u.indexOf(`/${BUCKET}/`); return i === -1 ? null : decodeURIComponent(u.slice(i + BUCKET.length + 2).split("?")[0]); };
@@ -1037,8 +1503,9 @@
     const optionFields = optionsReady ? `
         <div class="two">
           <div class="field"><label for="f-sizes">Sizes (optional)</label>
-            <input id="f-sizes" type="text" maxlength="200" placeholder="e.g. 38, 39, 40, 41" value="${esc(list(p && p.sizes).join(", "))}">
-            <span class="hint">Separate with commas. Customers must pick one.</span></div>
+            <input id="f-sizes" type="text" maxlength="200" placeholder="e.g. 38-44 or S-XL or 38, 40, 42" value="${esc(list(p && p.sizes).join(", "))}">
+            <span class="hint">Type a range (38-44, S-XL) or list sizes with commas. Customers must pick one.</span>
+            <span class="hint" id="sizePrev" aria-live="polite"></span></div>
           <div class="field"><label for="f-colours">Colours (optional)</label>
             <input id="f-colours" type="text" maxlength="200" placeholder="e.g. Black, White, Tan" value="${esc(list(p && p.colours).join(", "))}">
             <span class="hint">Separate with commas. Common colours show as round swatches.</span></div>
@@ -1084,6 +1551,13 @@
     };
     drawImgs(); drawTotal();
     $("f-price").oninput = drawTotal; $("f-ship").oninput = drawTotal;
+    if ($("f-sizes")) {
+      const drawSizes = () => {
+        const s = expandSizes($("f-sizes").value);
+        $("sizePrev").textContent = s.length ? `Customers will choose from: ${s.join(" · ")}` : "";
+      };
+      $("f-sizes").oninput = drawSizes; drawSizes();
+    }
     $("imgs").onclick = (e) => {
       const b = e.target.closest("button[data-i]"); if (!b) return;
       const [gone] = images.splice(Number(b.dataset.i), 1);
@@ -1118,7 +1592,7 @@
           image_urls: urls,
         };
         if (optionsReady) {
-          row.sizes = parseList($("f-sizes").value);
+          row.sizes = expandSizes($("f-sizes").value);
           row.colours = parseList($("f-colours").value);
         }
         // small preview + batches need batches.sql to have been run
