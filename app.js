@@ -603,7 +603,7 @@
     const n = cartCount();
     const head = `<div class="chead"><button type="button" class="iconbtn" id="cBack" aria-label="Back to shop">${ICON.back}</button><h1>Your cart</h1><span class="ccount">${n} ITEM${n === 1 ? "" : "S"}</span></div>`;
     if (!items.length) {
-      app.innerHTML = `<div class="view cartpage">${head}<div class="empty"><p>Your cart is empty.</p><a class="btn btn-gold" href="#/">Browse products</a></div></div>`;
+      app.innerHTML = `<div class="view cartpage">${head}<div class="empty"><p>Your cart is empty.</p><a class="btn btn-gold" href="#/">Browse products</a></div>${ordersOk ? `<a class="btn btn-ghost wide" href="#/orders">My orders</a>` : ""}</div>`;
       $id("cBack").onclick = goBack;
       return;
     }
