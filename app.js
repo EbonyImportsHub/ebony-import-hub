@@ -875,10 +875,36 @@
     if (route() !== "/orders") return;
     app.innerHTML = `<div class="view cartpage">${head}
       ${rows.length ? `<div style="display:flex;flex-direction:column;gap:12px">${rows.map((o) => `<a class="box o-row" href="#/order/${esc(o.token)}"><div><b>${esc(o.code)}</b><small>${esc(fmtWhen(o.created_at))} · ${o.method === "transfer" ? "Bank transfer" : "WhatsApp"}</small></div><div class="o-r2"><b>${naira(o.total)}</b>${statusChip(o.status)}</div></a>`).join("")}</div>
-        <p class="cnote">Orders are saved on this phone. Clearing your browser data removes this list.</p>`
+        <p class="cnote">Orders are saved on this phone. On a new phone, use the form below to get yours back.</p>`
         : `<div class="empty"><p>${failed ? "Couldn't load your orders. Check your connection." : "You haven't placed any orders on this phone yet."}</p><a class="btn btn-gold" href="#/">Browse products</a></div>`}
     </div>`;
     $id("oBack").onclick = () => { location.hash = "#/"; };
+    const host = app.querySelector(".cartpage");
+    host.insertAdjacentHTML("beforeend", `<form class="box o-find" id="findForm">
+      <span class="eyebrow">Ordered on another phone?</span>
+      <p class="cnote" style="text-align:left;margin:0">Enter your order number and the phone number you ordered with to bring your order back here.</p>
+      <div class="field"><label for="f-code">Order number</label><input id="f-code" type="text" maxlength="20" placeholder="e.g. EIH-1001" autocapitalize="characters" autocomplete="off"></div>
+      <div class="field"><label for="f-phone">Phone number</label><input id="f-phone" type="text" inputmode="tel" maxlength="30" autocomplete="tel"></div>
+      <p class="error" id="fErr" role="alert" hidden></p>
+      <button type="submit" class="btn btn-gold" id="fBtn">Find my order</button></form>`);
+    $id("findForm").onsubmit = async (e) => {
+      e.preventDefault();
+      const btn = $id("fBtn"), err = $id("fErr");
+      err.hidden = true;
+      const code = $id("f-code").value.trim(), phone = $id("f-phone").value.trim();
+      if (!code || phone.replace(/\D/g, "").length < 10) { err.textContent = "Please enter your order number and phone number."; err.hidden = false; return; }
+      btn.disabled = true; btn.textContent = "Searching…";
+      const { data, error } = await sb.rpc("find_order", { p_code: code, p_phone: phone });
+      btn.disabled = false; btn.textContent = "Find my order";
+      if (error || !data || !data.token) {
+        err.textContent = (error && /No order found/i.test(error.message))
+          ? "We couldn't find an order with those details. Check the order number and use the same phone number you ordered with. If you ordered on WhatsApp without giving a number, message us there."
+          : ((error && error.message) || "Something went wrong. Please try again.");
+        err.hidden = false; return;
+      }
+      if (!myOrders.some((o) => o.token === data.token)) { myOrders.unshift({ code: data.code, token: data.token, at: Date.now() }); saveOrders(); }
+      location.hash = "#/order/" + data.token;
+    };
   }
 
   /* ---------------- Shipping rules ---------------- */

@@ -359,3 +359,5 @@ img{max-width:100%}
 .o-arow .a-name{grid-column:1/-1}
 .o-arow .linkbtn{grid-column:1/-1;justify-self:start}
 @media(min-width:640px){.o-stats{grid-template-columns:repeat(4,1fr)}}
+
+.o-find{display:flex;flex-direction:column;gap:6px;margin-top:8px}.o-find .field{margin-bottom:8px}

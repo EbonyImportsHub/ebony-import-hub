@@ -271,12 +271,42 @@ begin
 end;
 $$;
 
+-- 5b) "Find my order": a customer on a new phone gets their order back with order code + the phone number they ordered with
+create or replace function public.find_order(p_code text, p_phone text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  o public.orders%rowtype;
+  c text := upper(regexp_replace(btrim(coalesce(p_code, '')), '\s', '', 'g'));
+  want text := right(regexp_replace(coalesce(p_phone, ''), '\D', '', 'g'), 10);
+  have text;
+begin
+  if c ~ '^[0-9]+$' then c := 'EIH-' || c;
+  elsif c ~ '^EIH[0-9]+$' then c := 'EIH-' || substr(c, 4);
+  end if;
+  select * into o from public.orders where code = c;
+  if found then
+    have := right(regexp_replace(coalesce(o.customer_phone, ''), '\D', '', 'g'), 10);
+  end if;
+  if not found or length(want) < 10 or have is distinct from want then
+    perform pg_sleep(0.4); -- slows down anyone guessing
+    raise exception 'No order found with those details';
+  end if;
+  return jsonb_build_object('token', o.token, 'code', o.code);
+end;
+$$;
+
 revoke all on function public.place_order(jsonb, text, text, text) from public;
 revoke all on function public.get_orders(uuid[]) from public;
 revoke all on function public.attach_receipt(uuid, text, text) from public;
 grant execute on function public.place_order(jsonb, text, text, text) to anon, authenticated;
 grant execute on function public.get_orders(uuid[]) to anon, authenticated;
 grant execute on function public.attach_receipt(uuid, text, text) to anon, authenticated;
+revoke all on function public.find_order(text, text) from public;
+grant execute on function public.find_order(text, text) to anon, authenticated;
 
 -- 6) Private storage for payment receipts (not public: only you can open them)
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
