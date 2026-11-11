@@ -665,7 +665,7 @@
         <hr><div class="big"><span class="lbl">TOTAL</span><span class="amt">${naira(t.total)}</span></div></div>` : ""}
       ${checkout}
       <button type="button" class="btn btn-ghost" id="clearCart">Clear cart</button>
-      ${myOrders.length ? `<a class="linkbtn" style="text-align:center;display:block;padding-top:12px" href="#/orders">My orders</a>` : ""}
+      ${ordersOk ? `<a class="btn btn-ghost wide" href="#/orders">My orders</a>` : ""}
     </div>`;
     const placeOrder = async (method) => {
       const err = $id("coErr");
